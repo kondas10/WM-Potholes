@@ -1,0 +1,541 @@
+---
+title: "Pothole_Paper"
+author: "AK"
+format: html
+editor: visual
+---
+
+## Imputation
+
+```{r}
+library(mice)
+
+#Set up imputation matrix 
+ini <- mice(final, maxit = 0)
+meth <- ini$method
+pred <- ini$predictorMatrix
+
+#Only impute for the 3 missing variables that go into Framingham calculation
+#Predictive mean mathcing 
+meth[] <- ""
+meth["total_cholesterol"] <- "pmm"
+meth["hdl_cholesterol"] <- "pmm"
+meth["crc_systolic"] <- "pmm"
+meth["calcfields_fh_final"] <- ""
+
+pred[,] <- 0
+
+#PREDICTOR MATRIX
+pred["total_cholesterol", c("age_appt_average", "screening_sex", "nihtoolbox_years_education", "race_f", "ethnicity_f", "tbi_hx_f", "any_psych_hx", "fitness_bmi", "frs_diabetes", "frs_med", "crc_systolic", "crc_diastolic", "frs_hypertension", "frs_smoking", "max_hr_bpm", "fitness_fatpercent", "dxa_visceral_volume", "whole_skeleton_fa", "WM.hypointensities_volume", "num_potholes_fa")] <- 1
+pred["hdl_cholesterol", c("age_appt_average", "screening_sex", "nihtoolbox_years_education", "race_f", "ethnicity_f", "tbi_hx_f", "any_psych_hx", "fitness_bmi", "frs_diabetes", "frs_med", "crc_systolic", "crc_diastolic", "frs_hypertension", "frs_smoking", "max_hr_bpm", "fitness_fatpercent", "dxa_visceral_volume", "whole_skeleton_fa", "WM.hypointensities_volume", "num_potholes_fa")] <- 1
+pred["crc_systolic", c("age_appt_average", "screening_sex", "nihtoolbox_years_education", "race_f", "ethnicity_f", "tbi_hx_f", "any_psych_hx", "fitness_bmi", "ldl_cholesterol", "non_hdl_cholesterol", "hdl_cholesterol", "total_cholesterol", "triglycerides", "glucose", "hemoglobin_a1c", "insulin", "frs_diabetes", "frs_med", "frs_hypertension", "frs_smoking", "max_hr_bpm", "fitness_fatpercent", "dxa_visceral_volume", "whole_skeleton_fa", "WM.hypointensities_volume", "num_potholes_fa")] <- 1
+
+# 1.m = 1 for single imputation
+imp <- mice(
+  final,
+  method = meth,
+  predictorMatrix = pred,
+  m = 1,                
+  maxit = 5,             
+  seed = 123
+)
+
+# 2. Extract the completed master dataset
+final_imp <- complete(imp, 1)
+```
+
+## Framingham Calculations
+
+Calculation for women, untreated
+
+100*(1-(0.95012)^((2.71828182845904)^(sum((log(\[frs_age\])*2.32888),(log(\[total_cholesterol\])*1.20904),(log(\[hdl_cholesterol\])*(-0.70833)),(log(\[crc_systolic\])*2.76157),(\[frs_smoking\]*0.52873),(\[frs_diabetes\]\*0.69154),(-26.1931)))))
+
+Calculation for man, untreated
+
+100*(1-(0.88936)^((2.71828182845904)^(sum((log(\[frs_age\])*3.06117),(log(\[total_cholesterol\])*1.12370),(log(\[hdl_cholesterol\])*(-0.93263)),(log(\[crc_systolic\])*1.93303),(\[frs_smoking\]*0.65451),(\[frs_diabetes\]\*0.57367),(-23.9802)))))
+
+## Basic Analysis Setup: Whole Brain Potholes
+
+```{r}
+library(MASS)
+library(performance)
+library(pscl)
+
+#Number of clusters, covariates only
+whole_brain_clusters_1 <- glm.nb(
+  num_potholes_fa ~
+    log_icv_c +
+    education_c +
+    screening_sex +
+    framingham_c +
+    any_psych_hx,
+  data = final_imp
+)
+
+summary(whole_brain_clusters_1)
+pR2(whole_brain_clusters_1)
+performance::model_performance(whole_brain_clusters_1)
+exp(coef(whole_brain_clusters_1))
+exp(confint(whole_brain_clusters_1))
+
+#Number of clusters, covariates and linear age
+whole_brain_clusters_2 <- glm.nb(
+  num_potholes_fa ~
+    log_icv_c +
+    education_c +
+    screening_sex +
+    framingham_c +
+    any_psych_hx +
+    age_c,
+  data = final_imp
+)
+
+summary(whole_brain_clusters_2)
+pR2(whole_brain_clusters_2)
+performance::model_performance(whole_brain_clusters_2)
+
+exp(coef(whole_brain_clusters_2))
+exp(confint(whole_brain_clusters_2))
+
+car::vif(whole_brain_clusters_2)
+anova(whole_brain_clusters_1, whole_brain_clusters_2)
+
+#Continue for each predictor
+#Only used for whole brain counts
+```
+
+## Basic Analysis Setup: Mean FA
+
+```{r}
+library(lmtest)
+
+#Whole Skeleton Mean FA, covariates only
+whole_brain_fa_1 <- lm(
+  whole_skeleton_fa ~ 
+    log_icv_c +
+    education_c +
+    screening_sex +
+    framingham_c +
+    any_psych_hx,
+  data = final_imp
+)
+
+summary(whole_brain_fa_1)
+shapiro.test(residuals(whole_brain_fa_1))
+bptest(whole_brain_fa_1)
+
+#Whole Skeleton Mean FA, covariates and linear age
+whole_brain_fa_2 <- lm(
+  whole_skeleton_fa ~ 
+    log_icv_c +
+    education_c +
+    screening_sex +
+    framingham_c +
+    any_psych_hx + 
+    age_c,
+  data = final_imp
+)
+
+summary(whole_brain_fa_2)
+shapiro.test(residuals(whole_brain_fa_2))
+bptest(whole_brain_fa_2)
+
+car::vif(whole_brain_fa_2)
+anova(whole_brain_fa_1, whole_brain_fa_2)
+
+#Continue for each predictor and ROI
+```
+
+## Basic Analysis Setup: ROI Potholes Hurdle Models
+
+```{r}
+#Number of clusters in CC, covariates only
+cc_hurdle_1 <- hurdle(
+  cc_NumClusters ~
+    log_icv_c +
+    education_c +
+    screening_sex +
+    framingham_c +
+    any_psych_hx,
+  data = final_imp,
+  dist = "negbin"
+)
+
+summary(cc_hurdle_1)
+pR2(cc_hurdle_1)
+performance::model_performance(cc_hurdle_1)
+exp(coef(cc_hurdle_1))
+exp(confint(cc_hurdle_1))
+
+#Number of clusters in CC, covariates + linear age
+cc_hurdle_2 <- hurdle(
+  cc_NumClusters ~
+    log_icv_c +
+    education_c +
+    screening_sex +
+    framingham_c +
+    any_psych_hx +
+    age_c,
+  data = final_imp,
+  dist = "negbin"
+)
+
+summary(cc_hurdle_2)
+pR2(cc_hurdle_2)
+performance::model_performance(cc_hurdle_2)
+exp(coef(cc_hurdle_2))
+exp(confint(cc_hurdle_2))
+lrtest(cc_hurdle_1, cc_hurdle_2)
+
+#Continue for each predictor and ROI
+```
+
+## Memory
+
+```{r}
+cog <- read.csv("Z:/Projects/CMPA_2021B092/Data/behavioral/cog01.csv")
+
+cog <- dplyr::select(cog, anon_subid,
+                     cvlt_trials1_5_raw, cvlt_ldfr_raw,
+                     cvlt_recog_hits_raw, cvlt_fps_raw,
+                     wms_lm1_raw, wms_lm2_raw, lm_recog_raw,
+                     bvmtr_totalraw, bvmtr_delayraw, picsequence_raw)
+
+#sample with memory data
+data2 <- merge(final_imp, cog, by="anon_subid", all=FALSE)
+
+#check for problematic neuropsych data -- none
+count(data2, appointment_cautions___1)
+count(data2, appointment_cautions___2)
+
+#CALCULATE COMPOSITE SCORES********
+#EPISODIC MEMORY #
+#Calculate cvlt recognition discrimination score
+data2$cvlt_recog_discrim <- (data2$cvlt_recog_hits_raw - data2$cvlt_fps_raw)
+#Create data2frame with only episodic memory measures & anon_subid
+memory_comp_calc <- dplyr::select(data2, anon_subid, cvlt_trials1_5_raw, cvlt_ldfr_raw, cvlt_recog_discrim, wms_lm1_raw, wms_lm2_raw, lm_recog_raw, bvmtr_totalraw, bvmtr_delayraw, picsequence_raw)
+#Change episodic memory variable names to indicate they're z-scored
+names(memory_comp_calc)[2:10] <- 
+  paste(names(memory_comp_calc)[2:10], "zscore", sep = "_")
+#z-score episodic memory variables & convert to numeric
+for (i in 2:10) {
+  memory_comp_calc[,i] <- scale(memory_comp_calc[,i])
+}
+for (i in 2:10) {
+  memory_comp_calc[,i] <- as.numeric((memory_comp_calc[,i]))
+}
+#calculate composites -- higher scores reflect better performance
+#no inverse coding required
+memory_comp_calc$mem_comp <- rowMeans(memory_comp_calc[2:10])
+#convert composite scores to numeric
+memory_comp_calc[[11]] <- as.numeric(memory_comp_calc[[11]])
+
+#merge back into master data2frame, keeping all participants who are in both files 
+data2 <- merge(data2, memory_comp_calc, by="anon_subid", all=FALSE)
+```
+
+```{r}
+base1 <- lm(
+  mem_comp ~ 
+    log_icv_c +
+    education_c +
+    screening_sex +
+    framingham_c +
+    any_psych_hx,
+  data = data2
+)
+
+summary(base1)
+
+base <- lm(
+  mem_comp ~ 
+    log_icv_c +
+    education_c +
+    screening_sex +
+    framingham_c +
+    any_psych_hx +
+    age_c + tbi_hx,
+  data = data2
+)
+
+summary(base)
+
+anova(base1, base)
+
+mem_whole_fa <- lm(
+  mem_comp ~ 
+    log_icv_c +
+    education_c +
+    screening_sex +
+    framingham_c +
+    any_psych_hx +
+    age_c +
+    whole_skeleton_fa_c,
+  data = data2
+)
+
+summary(mem_whole_fa)
+anova(base, mem_whole_fa)
+
+mem_whole_potholes <- lm(
+  mem_comp ~ 
+    log_icv_c +
+    education_c +
+    screening_sex +
+    framingham_c +
+    any_psych_hx +
+    age_c +
+    num_potholes_fa,
+  data = data2
+)
+
+summary(mem_whole_potholes)
+anova(base, mem_whole_potholes)
+
+
+##Continue for each ROI
+```
+
+## Memory Exploratory Analyses
+
+```{r}
+mem_fornix_potholes <- lm(
+  mem_comp ~ 
+    log_icv_c +
+    education_c +
+    screening_sex +
+    framingham_c +
+    any_psych_hx +
+    age_c + 
+    full_jhu_fx_NumClusters,
+  data = data2
+)
+summary(mem_fornix_potholes)
+
+anova(base, mem_fornix_potholes)
+anova(mem_fornix_fa, mem_fornix_potholes)
+
+mem_fornix_potholes_2 <- lm(
+  mem_comp ~ 
+    log_icv_c +
+    framingham_c +
+    education_c +
+    screening_sex +
+    any_psych_hx +
+    age_c + fornix_fa +
+    full_jhu_fx_Voxels,
+  data = data2
+)
+summary(mem_fornix_potholes_2)
+
+fx_hurdle_5 <- hurdle(
+  full_jhu_fx_NumClusters ~
+    log_icv_c +
+    education_c +
+    screening_sex +
+    framingham_c +
+    any_psych_hx +
+    age_c + mem_comp,
+  data = data2,
+  dist = "negbin"
+)
+
+summary(fx_hurdle_5)
+
+library(lavaan)
+
+age_med_model <- '
+  full_jhu_fx_NumClusters ~ a*age_appt_average + screening_sex + education_c + log_icv_c + framingham_c +
+    any_psych_hx
+
+  mem_comp ~ b*full_jhu_fx_NumClusters + c*age_appt_average +
+    screening_sex + education_c + log_icv_c + framingham_c +
+    any_psych_hx
+
+  indirect := a*b
+  total := c + (a*b)
+'
+
+fit_age <- sem(
+  age_med_model,
+  data = data2,
+  se = "bootstrap",
+  bootstrap = 5000
+)
+
+summary(fit_age, standardized = TRUE)
+```
+
+## Figures
+
+```{r}
+# ---- shared setup ----
+age_center <- mean(final_imp$age_appt_average - final_imp$age_c, na.rm = TRUE)
+
+sig_style    <- list(lwd = 3, lty = 1, alpha = 1)
+nonsig_style <- list(lwd = 1.75, lty = 2, alpha = 0.65)
+
+age_seq <- seq(min(final_imp$age_c, na.rm = TRUE),
+               max(final_imp$age_c, na.rm = TRUE),
+               length.out = 200)
+n <- length(age_seq)
+age_seq_raw <- age_seq + age_center
+
+sex_ref   <- levels(final_imp$screening_sex)[1]
+psych_ref <- sort(unique(final_imp$any_psych_hx))[1]
+
+pred_data <- data.frame(
+  age_c = age_seq,
+  age2_c = age_seq^2,
+  log_icv_c = rep(0, n),
+  education_c = rep(0, n),
+  framingham_c = rep(0, n),
+  screening_sex = factor(rep(sex_ref, n), levels = levels(final_imp$screening_sex)),
+  any_psych_hx = rep(psych_ref, n)
+)
+
+plot(final_imp$age_appt_average,
+     final_imp$whole_skeleton_fa,
+     xlab = "Age (Years)",
+     ylab = "Whole Skeleton Mean FA",
+     main = "Age-Related Changes in Whole Skeleton Mean FA",
+     pch = 16,
+     col = "gray60")
+
+pred_linear    <- predict(whole_brain_fa_2, newdata = pred_data)
+pred_quadratic <- predict(whole_brain_fa_3, newdata = pred_data)
+
+lines(age_seq_raw, pred_linear,
+      col = "red", lwd = sig_style$lwd, lty = sig_style$lty)
+
+lines(age_seq_raw, pred_quadratic,
+      col = adjustcolor("blue", alpha.f = nonsig_style$alpha),
+      lwd = nonsig_style$lwd, lty = nonsig_style$lty)
+
+legend("topright",
+       legend = c("Linear model *", "Quadratic model"),
+       col = c("red", adjustcolor("blue", alpha.f = nonsig_style$alpha)),
+       lty = c(sig_style$lty, nonsig_style$lty),
+       lwd = c(sig_style$lwd, nonsig_style$lwd),
+       bty = "n")
+
+plot(final_imp$age_appt_average,
+     final_imp$num_potholes_fa,
+     xlab = "Age (Years)",
+     ylab = "Total Number of Potholes",
+     main = "Age-Related Pothole Burden",
+     pch = 16,
+     col = "gray60")
+
+pred_linear    <- predict(whole_brain_clusters_2, newdata = pred_data, type = "response")
+pred_quadratic <- predict(whole_brain_clusters_3, newdata = pred_data, type = "response")
+
+lines(age_seq_raw, pred_linear,
+      col = "red", lwd = sig_style$lwd, lty = 1)
+lines(age_seq_raw, pred_quadratic,
+      col = "blue", lwd = sig_style$lwd, lty = 2)
+
+legend("topleft",
+       legend = c("Linear model *", "Quadratic model *"),
+       col = c("red", "blue"),
+       lty = c(1, 2),
+       lwd = c(sig_style$lwd, sig_style$lwd),
+       bty = "n")
+```
+
+```{r}
+# ============================================================
+# TBI history -> probability of any fornix pothole
+# (zero-hurdle component of the hurdle() model)
+# ============================================================
+library(ggplot2)
+library(MASS)   # mvrnorm for simulation-based CIs
+library(pscl)
+
+set.seed(123)
+
+# Get actual levels for BOTH character columns from the data itself
+psych_levels <- sort(unique(final_imp$any_psych_hx))
+tbi_levels   <- sort(unique(final_imp$tbi_hx))
+print(tbi_levels)  # confirm these are e.g. "No TBI" "TBI" in the order you expect
+
+# Prediction rows: TBI = No vs Yes, all else at reference/mean
+newdat <- data.frame(
+  log_icv_c     = 0,
+  education_c   = 0,
+  screening_sex = factor(levels(final_imp$screening_sex)[1],
+                         levels = levels(final_imp$screening_sex)),
+  framingham_c  = 0,
+  any_psych_hx  = factor(psych_levels[1], levels = psych_levels),
+  age_c         = 0,
+  tbi_hx        = factor(tbi_levels, levels = tbi_levels)   # both levels, in their real order
+)
+
+# predict(type = "prob") gives P(Y = k); P(pothole present) = 1 - P(Y = 0)
+prob_mat  <- predict(fx_hurdle_3, newdata = newdat, type = "prob")
+point_est <- 1 - prob_mat[, 1]
+
+# Simulation-based 95% CI (parametric bootstrap on coefficients)
+coefs <- coef(fx_hurdle_3)
+vc    <- vcov(fx_hurdle_3)
+n_sim <- 2000
+sim_coefs <- mvrnorm(n_sim, mu = coefs, Sigma = vc)
+
+zero_idx <- grep("^zero_", names(coefs))   # confirm this matches names(coef(fornix_hurdle))
+Xz <- model.matrix(~ log_icv_c + education_c + screening_sex + framingham_c +
+                     any_psych_hx + age_c + tbi_hx, data = newdat)
+
+sim_probs <- apply(sim_coefs[, zero_idx], 1, function(b) plogis(Xz %*% b))
+ci_lo <- apply(sim_probs, 1, quantile, probs = 0.025)
+ci_hi <- apply(sim_probs, 1, quantile, probs = 0.975)
+
+panelB_df <- data.frame(
+  tbi_hx = factor(tbi_levels, levels = tbi_levels),
+  prob   = point_est,
+  lo     = ci_lo,
+  hi     = ci_hi
+)
+
+panelB <- ggplot(panelB_df, aes(x = tbi_hx, y = prob, fill = tbi_hx)) +
+  geom_col(width = 0.6, alpha = 0.85) +
+  geom_errorbar(aes(ymin = lo, ymax = hi), width = 0.15, linewidth = 0.7) +
+  scale_fill_manual(values = c("gray70", "blue")) +
+  scale_y_continuous(labels = scales::percent, limits = c(0, 1)) +
+  labs(x = NULL, y = "Predicted probability\nof \u22651 fornix pothole",
+       title = "TBI history associated with higher fornix pothole likelihood") +
+  theme_minimal(base_size = 12) +
+  theme(legend.position = "none",
+        plot.title = element_text(size = 14, face = "bold"))
+
+panelB
+#ggsave("tbi_pothole_probability.png", panelB, width = 5, height = 5, dpi = 300)
+```
+
+```{r}
+# ============================================================
+# Fornix pothole count -> memory (adjusted partial effect)
+# ============================================================
+library(visreg)
+library(ggplot2)
+
+mem_model_full <- lm(mem_comp ~ log_icv_c + framingham_c + education_c + screening_sex + any_psych_hx + age_c + fornix_fa + full_jhu_fx_NumClusters, data = data2)
+
+panelC <- visreg(mem_model_full, "full_jhu_fx_NumClusters", gg = TRUE,
+                 points = list(size = 2, col = "gray40"), line = list(col = "blue")) +
+  labs(x = "Number of fornix potholes",
+       y = "Memory composite\n(adjusted partial effect)",
+       title = "More fornix potholes are associated with worse memory") +
+  theme_minimal(base_size = 12) +
+  theme(plot.title = element_text(size = 14, face = "bold"))
+
+# find which layer is the fitted line (usually GeomLine)
+line_idx <- which(sapply(panelC$layers, function(l) inherits(l$geom, "GeomLine")))
+panelC$layers[[line_idx]]$aes_params$colour <- "blue"
+ribbon_idx <- which(sapply(panelC$layers, function(l) inherits(l$geom, "GeomRibbon")))
+panelC$layers[[ribbon_idx]]$aes_params$fill <- "blue"
+
+panelC$layers[[ribbon_idx]]$aes_params$fill  <- "blue"
+panelC$layers[[ribbon_idx]]$aes_params$alpha <- 0.15
+panelC
+#ggsave("fornix_pothole_memory.png", panelC, width = 5, height = 5, dpi = 300)
+```
