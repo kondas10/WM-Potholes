@@ -3,7 +3,6 @@
 #set up environment
 export OUT_DIR=/fs/ess/PAS2321/Projects/mindset_jmoody_dti-potholes-aging-tbi/AK #output directory where analyses will be stored
 export FA_DIR=/fs/ess/PAS2321/Projects/mindset_jmoody_dti-potholes-aging-tbi/final/potholes_fa/sample/thresholded/clusters
-export MD_DIR=/fs/ess/PAS2321/Projects/mindset_jmoody_dti-potholes-aging-tbi/final/potholes_md/sample/thresholded/clusters
 sample_list="$OUT_DIR"/sample.txt #individuals who are part of study sample
 mkdir "$OUT_DIR"/potholes_output_txt
 
